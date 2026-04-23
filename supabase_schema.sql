@@ -77,3 +77,20 @@ create index if not exists weight_log_user_date on public.weight_log(user_id, lo
 -- Done! Now go to Authentication → Settings and set:
 --   Site URL: exp://localhost:19000  (for dev)
 -- ═══════════════════════════════════════════════════════
+
+-- Run these to upgrade from previous version:
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url text;
+
+-- Create avatars storage bucket
+-- Go to Supabase Dashboard → Storage → New Bucket → name: avatars → Public: ON
+-- Then run these policies:
+INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE POLICY IF NOT EXISTS "Upload own avatar" ON storage.objects
+  FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
+CREATE POLICY IF NOT EXISTS "View avatars" ON storage.objects
+  FOR SELECT USING (bucket_id = 'avatars');
+CREATE POLICY IF NOT EXISTS "Update own avatar" ON storage.objects
+  FOR UPDATE USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
