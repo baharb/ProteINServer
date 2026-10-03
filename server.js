@@ -9,7 +9,7 @@ const FOOD_REF  = require('./foodReference');
 const { requireUser, dailyCap } = require('./auth');
 
 const app    = express();
-const groq   = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const groq   = new Groq({ apiKey: process.env.GROQ_API_KEY, maxRetries: 1, timeout: 30000 });
 const upload = multer({ dest: '/tmp/audio/', limits: { fileSize: 10 * 1024 * 1024 } });
 
 app.use(cors());
@@ -25,10 +25,14 @@ const transcribeLimiter = rateLimit({ ...byUser, windowMs:60000, max:20,  messag
 const LANG_NAMES = { en:'English', fa:'Persian (Farsi)', ar:'Arabic', es:'Spanish', ja:'Japanese', zh:'Simplified Chinese' };
 const langName = (code) => LANG_NAMES[code] || 'English';
 
+// Groq says "rate limit" (free tier full) → tell the app it's busy, not broken.
+const isGroqBusy = (err) => err?.status === 429 || /rate limit/i.test(err?.message || '');
+const busy = (res) => res.status(503).json({ code: 'busy', error: 'The app is very busy right now. Please try again in a minute.' });
+
 app.get('/', (_req, res) => res.json({ status:'ProteIN AI Server v2.0 ✅' }));
 
 // ── AI Chat ────────────────────────────────────────────────────────────────
-app.post('/chat', requireUser, chatLimiter, dailyCap('chat', 100), async (req, res) => {
+app.post('/chat', requireUser, chatLimiter, dailyCap('chat'), async (req, res) => {
   const { messages, profile, lang } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error:'messages required' });
 
@@ -63,12 +67,13 @@ RULES:
     res.json({ reply });
   } catch(err) {
     console.error('Chat error:', err.message);
+    if (isGroqBusy(err)) return busy(res);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ── Food Scan ──────────────────────────────────────────────────────────────
-app.post('/scan', requireUser, scanLimiter, dailyCap('scan', 40), async (req, res) => {
+app.post('/scan', requireUser, scanLimiter, dailyCap('scan'), async (req, res) => {
   const { imageBase64, mimeType = 'image/jpeg', lang } = req.body;
   if (!imageBase64) return res.status(400).json({ error:'imageBase64 required' });
 
@@ -142,6 +147,7 @@ Rules:
 
   } catch(err) {
     console.error('Scan error:', err.message);
+    if (isGroqBusy(err)) return busy(res);
     if (err instanceof SyntaxError) return res.status(500).json({ error:'Could not parse food data. Try a clearer photo.' });
     res.status(500).json({ error: err.message });
   }
@@ -163,7 +169,7 @@ function relevantRefs(text) {
 }
 const refLine = (f) => `${f.name} (${f.fa}) — per ${f.unit}: ${f.protein}g protein, ${f.calories} kcal`;
 
-app.post('/estimate', requireUser, estimateLimiter, dailyCap('estimate', 150), async (req, res) => {
+app.post('/estimate', requireUser, estimateLimiter, dailyCap('estimate'), async (req, res) => {
   const text = String(req.body?.text || '').trim().slice(0, 300);
   const lang = req.body?.lang;
   if (!text) return res.status(400).json({ error:'text required' });
@@ -205,12 +211,13 @@ Write every "name" in ${langName(lang)}.` }],
     res.json({ items });
   } catch (err) {
     console.error('Estimate error:', err.message);
+    if (isGroqBusy(err)) return busy(res);
     res.status(500).json({ error:'Could not estimate that meal. Try again.' });
   }
 });
 
 // ── Voice Transcription (Groq Whisper — FREE) ──────────────────────────────
-app.post('/transcribe', requireUser, transcribeLimiter, dailyCap('voice', 100), upload.single('audio'), async (req, res) => {
+app.post('/transcribe', requireUser, transcribeLimiter, dailyCap('voice'), upload.single('audio'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error:'No audio file received' });
   const filePath = req.file.path;
   try {
@@ -222,6 +229,7 @@ app.post('/transcribe', requireUser, transcribeLimiter, dailyCap('voice', 100), 
     res.json({ text: transcription.text?.trim() || '' });
   } catch(err) {
     console.error('Transcribe error:', err.message);
+    if (isGroqBusy(err)) return busy(res);
     res.status(500).json({ error: err.message });
   } finally {
     fs.unlink(filePath, () => {});

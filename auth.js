@@ -45,16 +45,43 @@ async function requireUser(req, res, next) {
   }
 }
 
-// ── Daily per-user caps (cost control). In memory: resets on restart/new day. ──
-const usage = new Map();   // `${day}:${userId}:${kind}` -> count
-function dailyCap(kind, max) {
+// ── Daily limits ────────────────────────────────────────────────────────────
+// Free version: small per-user caps, plus a whole-server daily budget so the
+// app stays inside Groq's free tier no matter how many people sign up.
+// A paid plan later only needs higher numbers here (and planFor() to return it).
+const PLAN_LIMITS = {
+  free:    { scan: 8,  estimate: 25,  chat: 15,  voice: 20 },
+  premium: { scan: 60, estimate: 250, chat: 150, voice: 200 },
+};
+const SERVER_DAILY_BUDGET = Number(process.env.SERVER_DAILY_BUDGET || 900);   // AI calls/day, all users
+
+function planFor(_userId) {
+  return 'free';   // TODO when payments exist: look up the user's subscription
+}
+
+const usage = new Map();   // `${day}:${who}:${kind}` -> count
+const today = () => new Date().toISOString().slice(0, 10);
+function bump(key) {
+  const n = (usage.get(key) || 0) + 1;
+  usage.set(key, n);
+  if (usage.size > 50000) usage.clear();
+  return n;
+}
+
+function dailyCap(kind) {
   return (req, res, next) => {
-    const day = new Date().toISOString().slice(0, 10);
-    const key = `${day}:${req.userId}:${kind}`;
-    const n = (usage.get(key) || 0) + 1;
-    if (n > max) return res.status(429).json({ error: `Daily limit reached (${max}). It resets tomorrow.` });
-    usage.set(key, n);
-    if (usage.size > 50000) usage.clear();
+    const day = today();
+    const limit = PLAN_LIMITS[planFor(req.userId)][kind];
+    const used = usage.get(`${day}:${req.userId}:${kind}`) || 0;
+    if (used >= limit) {
+      return res.status(429).json({ code: 'daily_limit', error: `Daily limit reached (${limit}). It resets tomorrow.`, limit });
+    }
+    if ((usage.get(`${day}:server`) || 0) >= SERVER_DAILY_BUDGET) {
+      return res.status(503).json({ code: 'busy', error: 'The app is very busy today. Please try again tomorrow.' });
+    }
+    bump(`${day}:${req.userId}:${kind}`);
+    bump(`${day}:server`);
+    res.setHeader('X-Remaining-Today', String(limit - used - 1));
     next();
   };
 }
