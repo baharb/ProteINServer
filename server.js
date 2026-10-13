@@ -7,6 +7,7 @@ const fs        = require('fs');
 const Groq      = require('groq-sdk');
 const FOOD_REF  = require('./foodReference');
 const { requireUser, dailyCap } = require('./auth');
+const { mountLegal } = require('./legal');
 
 const app    = express();
 const groq   = new Groq({ apiKey: process.env.GROQ_API_KEY, maxRetries: 1, timeout: 30000 });
@@ -28,6 +29,8 @@ const langName = (code) => LANG_NAMES[code] || 'English';
 // Groq says "rate limit" (free tier full) → tell the app it's busy, not broken.
 const isGroqBusy = (err) => err?.status === 429 || /rate limit/i.test(err?.message || '');
 const busy = (res) => res.status(503).json({ code: 'busy', error: 'The app is very busy right now. Please try again in a minute.' });
+
+mountLegal(app, requireUser);
 
 app.get('/', (_req, res) => res.json({ status:'ProteIN AI Server v2.0 ✅' }));
 
