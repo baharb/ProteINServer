@@ -3,15 +3,17 @@ const express   = require('express');
 const cors      = require('cors');
 const rateLimit = require('express-rate-limit');
 const multer    = require('multer');
-const fs        = require('fs');
 const Groq      = require('groq-sdk');
+const { toFile } = Groq;
 const FOOD_REF  = require('./foodReference');
 const { requireUser, dailyCap } = require('./auth');
 const { mountLegal } = require('./legal');
 
 const app    = express();
 const groq   = new Groq({ apiKey: process.env.GROQ_API_KEY, maxRetries: 1, timeout: 30000 });
-const upload = multer({ dest: '/tmp/audio/', limits: { fileSize: 10 * 1024 * 1024 } });
+// Audio stays in memory; it's sent to Whisper with a real file name, because
+// Groq picks the audio format from the extension (a bare temp file is rejected).
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
@@ -220,22 +222,33 @@ Write every "name" in ${langName(lang)}.` }],
 });
 
 // ── Voice Transcription (Groq Whisper — FREE) ──────────────────────────────
+// Short example sentence per language: Whisper reads it as a hint, so short
+// clips aren't mis-detected (Persian heard as Arabic/Urdu) — but the user can
+// still speak another language; nothing is forced.
+const VOICE_HINTS = {
+  en: 'I had two eggs, a slice of toast and a chicken breast.',
+  fa: 'دو تا تخم‌مرغ، یک برش نان و یک سینه مرغ خوردم.',
+  ar: 'أكلت بيضتين وشريحة خبز وصدر دجاج.',
+  es: 'Comí dos huevos, una tostada y una pechuga de pollo.',
+  ja: '卵を2個とトースト1枚と鶏むね肉を食べました。',
+  zh: '我吃了两个鸡蛋、一片吐司和一块鸡胸肉。',
+};
+
 app.post('/transcribe', requireUser, transcribeLimiter, dailyCap('voice'), upload.single('audio'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error:'No audio file received' });
-  const filePath = req.file.path;
+  const name = /\.(m4a|mp4|mp3|wav|webm|ogg|opus|flac|mpeg|mpga)$/i.test(req.file.originalname || '') ? req.file.originalname : 'voice.m4a';
   try {
     const transcription = await groq.audio.transcriptions.create({
-      file:            fs.createReadStream(filePath),
+      file:            await toFile(req.file.buffer, name),
       model:           'whisper-large-v3-turbo',
       response_format: 'json',
+      prompt:          VOICE_HINTS[req.body?.lang] || VOICE_HINTS.en,
     });
     res.json({ text: transcription.text?.trim() || '' });
   } catch(err) {
     console.error('Transcribe error:', err.message);
     if (isGroqBusy(err)) return busy(res);
     res.status(500).json({ error: err.message });
-  } finally {
-    fs.unlink(filePath, () => {});
   }
 });
 
