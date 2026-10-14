@@ -1,11 +1,13 @@
 // Public pages Google Play / the App Store require, plus account deletion.
 //   GET    /privacy         privacy policy
 //   GET    /delete-account  how to delete your account and data
+//   GET    /terms           terms of use
+//   GET    /help            help & support
 //   DELETE /account         deletes the signed-in user's data and login (needs SUPABASE_SERVICE_ROLE_KEY)
 
 const APP_NAME = 'ProteIN';
 const CONTACT  = process.env.PRIVACY_CONTACT_EMAIL || '';
-const UPDATED  = '2026-10-13';
+const UPDATED  = '2026-10-14';
 
 const page = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} · ${APP_NAME}</title>
@@ -53,7 +55,6 @@ We do not sell your data and we do not show ads.</p>
   <li><b>Supabase</b> — stores your account, profile and logged meals.</li>
   <li><b>Groq</b> — AI processing of meal photos, meal descriptions, voice and coach messages. Content is sent only to produce your answer.</li>
   <li><b>Render</b> — hosts our server.</li>
-  <li><b>Unsplash</b> — the app loads stock food photos from Unsplash's servers.</li>
 </ul>
 <p>All data is sent over encrypted connections (HTTPS).</p>
 
@@ -90,6 +91,54 @@ function deleteHtml() {
 Meal photos and voice recordings are never stored, so there is nothing else to delete.</p>`);
 }
 
+function termsHtml() {
+  return page('Terms of Use', `
+<h1>${APP_NAME} Terms of Use</h1>
+<p class="muted">Last updated: ${UPDATED}</p>
+<p>By using ${APP_NAME} you agree to these terms. If you don't agree, please don't use the app.</p>
+<h2>What the app does</h2>
+<p>${APP_NAME} helps you track protein and suggests simple meals. Protein and calorie numbers — including those from photos,
+voice and typed descriptions — are <b>estimates</b> and can be wrong. Check them when accuracy matters.</p>
+<h2>Not medical advice</h2>
+<p>${APP_NAME} gives general nutrition information only. It is not a substitute for a doctor or dietitian. If you are pregnant,
+have a medical condition (for example kidney disease or diabetes) or take medication, talk to a professional before changing your diet.</p>
+<h2>Your account</h2>
+<ul>
+  <li>Keep your login details private; you are responsible for activity on your account.</li>
+  <li>You must be at least 13 years old to create an account.</li>
+  <li>You can delete your account at any time from Profile → Account → Delete account.</li>
+</ul>
+<h2>Fair use</h2>
+<p>The free version has daily limits on scans, voice and coach messages so it can stay free. Don't misuse the service,
+try to break it, or use it to process content that isn't food-related.</p>
+<h2>Changes and availability</h2>
+<p>We may change or stop features, and update these terms; the date above shows the latest version.
+The app is provided "as is", without warranties, to the extent the law allows.</p>
+<h2>Contact</h2>
+<p>${contactLine()}. See also our <a href="/privacy">Privacy Policy</a>.</p>`);
+}
+
+function helpHtml() {
+  return page('Help', `
+<h1>${APP_NAME} Help</h1>
+<h2>Log a meal</h2>
+<ul>
+  <li><b>Type or say it:</b> on Today, write what you ate in any language (e.g. "2 eggs and toast") or tap 🎤 and speak, tap 🎤 again to stop.</li>
+  <li><b>Scan it:</b> tap the green Scan button, then <b>Take photo</b>. To leave the camera without a photo, press your phone's Back button.</li>
+  <li><b>Your foods:</b> foods you log are saved — tap one to log it again and choose how much.</li>
+</ul>
+<h2>Numbers look wrong?</h2>
+<p>Estimates can be off. Remove a meal with ✕ in Today's log and add it again with the amount (e.g. "2 chicken breasts").</p>
+<h2>"You've used today's free limit"</h2>
+<p>The free version has a daily limit for scans, voice and the coach. It resets the next day; typing a meal and Your foods still work.</p>
+<h2>Change language or target</h2>
+<p>Open Profile (your picture, top corner) → Language, or Edit profile to update your weight and goal — your protein target updates automatically.</p>
+<h2>Delete your account</h2>
+<p>Profile → Account → Delete account. <a href="/delete-account">More info</a>.</p>
+<h2>Still need help?</h2>
+<p>Contact ${contactLine()}.</p>`);
+}
+
 // Delete rows through Supabase's REST API with the service role key, then the login itself.
 async function deleteUser(userId) {
   const url = process.env.SUPABASE_URL;
@@ -108,6 +157,8 @@ async function deleteUser(userId) {
 function mountLegal(app, requireUser) {
   app.get('/privacy', (_req, res) => res.type('html').send(privacyHtml()));
   app.get('/delete-account', (_req, res) => res.type('html').send(deleteHtml()));
+  app.get('/terms', (_req, res) => res.type('html').send(termsHtml()));
+  app.get('/help', (_req, res) => res.type('html').send(helpHtml()));
   app.delete('/account', requireUser, async (req, res) => {
     try {
       await deleteUser(req.userId);
