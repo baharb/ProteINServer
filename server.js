@@ -222,29 +222,46 @@ Write every "name" in ${langName(lang)}.` }],
 });
 
 // ── Voice Transcription (Groq Whisper — FREE) ──────────────────────────────
-// Short example sentence per language: Whisper reads it as a hint, so short
+// A short neutral sentence per language: Whisper reads it as a hint, so short
 // clips aren't mis-detected (Persian heard as Arabic/Urdu) — but the user can
-// still speak another language; nothing is forced.
+// still speak another language; nothing is forced. Deliberately not about food,
+// so an echo of it (what Whisper outputs for silence) is easy to tell apart.
 const VOICE_HINTS = {
-  en: 'I had two eggs, a slice of toast and a chicken breast.',
-  fa: 'دو تا تخم‌مرغ، یک برش نان و یک سینه مرغ خوردم.',
-  ar: 'أكلت بيضتين وشريحة خبز وصدر دجاج.',
-  es: 'Comí dos huevos, una tostada y una pechuga de pollo.',
-  ja: '卵を2個とトースト1枚と鶏むね肉を食べました。',
-  zh: '我吃了两个鸡蛋、一片吐司和一块鸡胸肉。',
+  en: 'Hello, this is my food diary.',
+  fa: 'سلام، این دفترچه غذای من است.',
+  ar: 'مرحبًا، هذه مذكرات طعامي.',
+  es: 'Hola, este es mi diario de comidas.',
+  ja: 'こんにちは、これは私の食事日記です。',
+  zh: '你好，这是我的饮食日记。',
 };
+
+// With silence or noise Whisper "hears" its prompt (our hint) or a stock phrase.
+// Treat those as nothing said, so a silent recording never logs a meal.
+const words = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+const SILENCE_PHRASES = /^(thank you|thanks for watching|you|bye|okay|ok|مرسی|ممنون|زیرنویس|شكرا|ありがとうございました|谢谢)[.!。！\s]*$/i;
+function isEcho(text, hint) {
+  const said = words(text);
+  if (!said.length || SILENCE_PHRASES.test(String(text).trim())) return true;
+  const hintWords = new Set(words(hint));
+  const squash = (t) => words(t).join('');
+  if (squash(text) === squash(hint)) return true;   // exact echo (also covers CJK, which has no spaces)
+  const overlap = said.filter(w => hintWords.has(w)).length / said.length;
+  return said.length >= 4 && overlap >= 0.8;
+}
 
 app.post('/transcribe', requireUser, transcribeLimiter, dailyCap('voice'), upload.single('audio'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error:'No audio file received' });
   const name = /\.(m4a|mp4|mp3|wav|webm|ogg|opus|flac|mpeg|mpga)$/i.test(req.file.originalname || '') ? req.file.originalname : 'voice.m4a';
+  const hint = VOICE_HINTS[req.body?.lang] || VOICE_HINTS.en;
   try {
     const transcription = await groq.audio.transcriptions.create({
       file:            await toFile(req.file.buffer, name),
       model:           'whisper-large-v3-turbo',
       response_format: 'json',
-      prompt:          VOICE_HINTS[req.body?.lang] || VOICE_HINTS.en,
+      prompt:          hint,
     });
-    res.json({ text: transcription.text?.trim() || '' });
+    const text = transcription.text?.trim() || '';
+    res.json({ text: isEcho(text, hint) ? '' : text });
   } catch(err) {
     console.error('Transcribe error:', err.message);
     if (isGroqBusy(err)) return busy(res);
