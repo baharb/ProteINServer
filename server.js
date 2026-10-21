@@ -180,6 +180,8 @@ app.post('/estimate', requireUser, estimateLimiter, dailyCap('estimate'), async 
   if (!text) return res.status(400).json({ error:'text required' });
 
   const refs = relevantRefs(text);
+  // format=grams: same shape as /scan ingredients, for adding foods a photo missed.
+  if (req.body?.format === 'grams') return estimateGrams(req, res, text, lang, refs);
   const system = `You turn a short meal description (in any language, or mixed) into foods with protein estimates.
 ${refs.length ? `Use these reference values when a food matches (per ONE household unit):\n${refs.map(refLine).join('\n')}\n` : ''}
 Return ONLY JSON: {"items":[{"name":"Kabab koobideh","emoji":"🍢","unit":"skewer","qty":2,"qty_given":false,"protein_per_unit":15,"calories_per_unit":230}]}
@@ -220,6 +222,47 @@ Write every "name" in ${langName(lang)}.` }],
     res.status(500).json({ error:'Could not estimate that meal. Try again.' });
   }
 });
+
+// Foods typed on the scan result ("a slice of bread", "200g rice") → grams +
+// nutrition per 100 g, exactly like /scan ingredients, so they edit and scale the same way.
+async function estimateGrams(req, res, text, lang, refs) {
+  const system = `You turn a short food description (any language) into ingredients with weights.
+${refs.length ? `Reference values for one household unit:
+${refs.map(refLine).join('\n')}\n` : ''}
+Return ONLY JSON: {"items":[{"name":"Bread","amount_g":30,"protein":3,"calories":80,"carbs":15,"fat":1}]}
+Rules:
+- One item per distinct food.
+- amount_g = grams eaten. If the user gave grams, use exactly that. If they gave a count or household unit (a slice, 2 eggs, a glass, a bowl), convert it to realistic grams (1 egg ≈ 50 g, 1 slice bread ≈ 30 g, 1 glass ≈ 250 g, 1 cup cooked rice ≈ 160 g). If no amount, use one normal portion.
+- protein, calories, carbs, fat = TOTALS for that amount_g (not per 100 g), realistic USDA-style values, integers. Examples: 1 slice bread (30 g) = 3 g protein, 80 kcal; 1 cup cooked white rice (160 g) = 4 g protein, 205 kcal; 1 glass doogh (250 g) = 6 g protein, 90 kcal; 1 bowl plain yogurt (250 g) = 9 g protein, 150 kcal.
+- name MUST be written in ${langName(lang)}, short (e.g. "Doogh", "White rice").
+- If the text is not food, return {"items":[]}.`;
+  try {
+    const completion = await groq.chat.completions.create({
+      model: process.env.ESTIMATE_MODEL || 'openai/gpt-oss-20b',
+      messages: [{ role:'system', content:system }, { role:'user', content:`Food: ${text}
+Write every "name" in ${langName(lang)}.` }],
+      temperature: 0.1,
+      max_tokens: 2000,
+      reasoning_effort: 'low',
+      response_format: { type:'json_object' },
+    });
+    const parsed = JSON.parse((completion.choices[0]?.message?.content || '{}').replace(/```json\n?|```/g, '').trim());
+    const n =(v) => Math.max(0, Math.round(Number(v) || 0));
+    // The model gives totals for the amount; the app (like /scan) works per 100 g.
+    const items = (parsed.items || []).slice(0, 6).map(it => {
+      const g = Math.min(2000, Math.max(1, n(it.amount_g) || 100));
+      const per100 = (v) => Math.round((Number(v) || 0) * 100 / g * 10) / 10;
+      return { name: String(it.name || 'Food').slice(0, 60), amount_g: g,
+        per_100g: { calories: per100(it.calories), protein: per100(it.protein), carbs: per100(it.carbs), fat: per100(it.fat) } };
+    });
+    if (!items.length) return res.json({ error:"Couldn't find a food in that. Try e.g. \"a slice of bread\"." });
+    res.json({ items });
+  } catch (err) {
+    console.error('Estimate (grams) error:', err.message);
+    if (isGroqBusy(err)) return busy(res);
+    res.status(500).json({ error:'Could not estimate that food. Try again.' });
+  }
+}
 
 // ── Voice Transcription (Groq Whisper — FREE) ──────────────────────────────
 // A short neutral sentence per language: Whisper reads it as a hint, so short
