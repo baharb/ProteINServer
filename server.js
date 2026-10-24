@@ -233,7 +233,9 @@ Return ONLY JSON: {"items":[{"name":"Bread","amount_g":30,"protein":3,"calories"
 Rules:
 - One item per distinct food.
 - amount_g = grams eaten. If the user gave grams, use exactly that. If they gave a count or household unit (a slice, 2 eggs, a glass, a bowl), convert it to realistic grams (1 egg ≈ 50 g, 1 slice bread ≈ 30 g, 1 glass ≈ 250 g, 1 cup cooked rice ≈ 160 g). If no amount, use one normal portion.
-- protein, calories, carbs, fat = TOTALS for that amount_g (not per 100 g), realistic USDA-style values, integers. Examples: 1 slice bread (30 g) = 3 g protein, 80 kcal; 1 cup cooked white rice (160 g) = 4 g protein, 205 kcal; 1 glass doogh (250 g) = 6 g protein, 90 kcal; 1 bowl plain yogurt (250 g) = 9 g protein, 150 kcal.
+- protein, calories, carbs, fat = TOTALS for that amount_g (not per 100 g), realistic USDA-style values, integers. Examples: 1 slice bread (30 g) = 3 g protein, 80 kcal; 1 cup cooked white rice (160 g) = 4 g protein, 205 kcal; 1 glass doogh (250 g) = 6 g protein, 90 kcal; 1 bowl plain yogurt (250 g) = 9 g protein, 150 kcal; 150 g Greek (strained) yogurt = 15 g protein, 110 kcal (Greek yogurt ≈ 10 g protein per 100 g, plain ≈ 3.5 g); 100 g cooked chicken breast = 31 g protein, 165 kcal; 100 g cottage cheese = 11 g protein, 98 kcal.
+- Rice, pasta, grains, beans and meat are COOKED weights unless the user says raw/dry (100 g cooked rice = 2.5 g protein, 130 kcal).
+- Check: protein per 100 g must be realistic for that food (lean meat/fish 20-31, eggs 13, Greek yogurt 9-10, cheese 20-25, bread 9, cooked rice 2.5, fruit/veg 0-3).
 - name MUST be written in ${langName(lang)}, short (e.g. "Doogh", "White rice").
 - If the text is not food, return {"items":[]}.`;
   try {
